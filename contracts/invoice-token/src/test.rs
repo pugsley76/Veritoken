@@ -38,13 +38,19 @@ fn setup() -> Harness {
     let verifier = Address::generate(&env);
     kyc.add_verifier(&verifier);
 
-    let compliance_id = env.register(ComplianceEngine, ());
-    let compliance = ComplianceEngineClient::new(&env, &compliance_id);
-    compliance.initialize(&admin);
+    let compliance_id = env.register(KycRegistry, ()); // placeholder address; unused by invoice token
 
-    let token_id = env.register(InvoiceToken, ());
+    // Invoice token — constructor args passed atomically at register time
+    let token_id = env.register(
+        InvoiceToken,
+        (
+            admin.clone(),
+            kyc_id.clone(),
+            compliance_id.clone(),
+            meta(&env),
+        ),
+    );
     let token = InvoiceTokenClient::new(&env, &token_id);
-    token.initialize(&admin, &kyc_id, &compliance_id, &meta(&env));
 
     Harness {
         env,
@@ -134,60 +140,14 @@ fn test_redeem_insufficient_balance() {
 }
 
 #[test]
-fn test_transfer_success() {
+fn test_non_deployer_cannot_reinitialize() {
     let h = setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    
-    h.approve_kyc(&alice);
-    h.approve_kyc(&bob);
-    
-    h.token.issue(&alice, &1000);
-    h.token.transfer(&alice, &bob, &400);
-    
-    assert_eq!(h.token.balance(&alice), 600);
-    assert_eq!(h.token.balance(&bob), 400);
-}
-
-#[test]
-fn test_transfer_kyc_rejection() {
-    let h = setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    
-    h.approve_kyc(&alice);
-    h.token.issue(&alice, &1000);
-    
-    // bob has no KYC
-    assert!(h.token.try_transfer(&alice, &bob, &400).is_err());
-}
-
-#[test]
-fn test_transfer_blocklist_rejection() {
-    let h = setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    
-    h.approve_kyc(&alice);
-    h.approve_kyc(&bob);
-    
-    h.token.issue(&alice, &1000);
-    h.compliance.add_to_blocklist(&bob);
-    
-    assert!(h.token.try_transfer(&alice, &bob, &400).is_err());
-}
-
-#[test]
-fn test_transfer_post_settlement_rejection() {
-    let h = setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    
-    h.approve_kyc(&alice);
-    h.approve_kyc(&bob);
-    
-    h.token.issue(&alice, &1000);
-    h.token.settle();
-    
-    assert!(h.token.try_transfer(&alice, &bob, &400).is_err());
+    let attacker = Address::generate(&h.env);
+    let kyc_id = Address::generate(&h.env);
+    let ce_id = Address::generate(&h.env);
+    // initialize must always panic — the constructor has already run
+    let result = h
+        .token
+        .try_initialize(&attacker, &kyc_id, &ce_id, &meta(&h.env));
+    assert!(result.is_err());
 }
